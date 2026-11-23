@@ -3,171 +3,221 @@
 #include <ESP8266WebServer.h>
 #include <LittleFS.h>
 
-// ===================================
-// ACCESS POINT CONFIGURATION
-// ===================================
+// ============================================================
+//  Config
+// ============================================================
+namespace cfg {
+  const char* const AP_SSID = "ESP8266_Setup";
+  const char* const AP_PASS = "12345678";            // 8+ characters
+  const unsigned long CONNECT_TIMEOUT_MS = 20000;
+  const size_t MIN_PASSWORD_LEN = 8;
+}
 
-const char* apSSID = "ESP8266_Setup";
-const char* apPassword = "12345678";
-
-// ===================================
-// WEB SERVER
-// ===================================
-
+// ============================================================
+//  State
+// ============================================================
 ESP8266WebServer server(80);
 
-bool connecting = false;
-unsigned long connectionStart = 0;
-const unsigned long connectionTimeout = 20000;
-
-// ===================================
-// ROOT PAGE
-// ===================================
-
-void handleRoot() {
-    server.sendHeader("Cache-Control", "no-cache");
-    if (WiFi.status() == WL_CONNECTED) {
-        server.sendHeader("Location", "/index.html");
-    } else {
-        server.sendHeader("Location", "/setup.html");
-    }
-    server.send(302, "text/plain", "");
+namespace conn {
+  bool connecting = false;
+  unsigned long startedAt = 0;
+  String lastError;
 }
 
-// ===================================
-// WIFI CONNECTION
-// ===================================
+// ============================================================
+//  Small helpers
+// ============================================================
+const char* boolStr(bool v) { return v ? "true" : "false"; }
 
-void handleConnect() {
-    String ssid = server.arg("ssid");
-    String password = server.arg("password");
+bool isOnline() { return WiFi.status() == WL_CONNECTED; }
 
-    if (ssid.length() == 0) {
-        server.send(400, "application/json",
-                    "{\"success\":false,\"message\":\"SSID is required.\"}");
-        return;
-    }
+String jsonEscape(const String& s) {
+  String out;
+  out.reserve(s.length() + 4);
+  for (size_t i = 0; i < s.length(); i++) {
+    char c = s[i];
+    if (c == '"' || c == '\\') { out += '\\'; out += c; }
+    else if ((uint8_t)c >= 0x20) { out += c; }
+  }
+  return out;
+}
 
-    Serial.println();
-    Serial.print("Connecting to: ");
-    Serial.println(ssid);
+void sendJson(int code, const String& body) {
+  server.sendHeader("Cache-Control", "no-store");
+  server.send(code, "application/json", body);
+}
 
-    // Keep Access Point active
-    WiFi.mode(WIFI_AP_STA);
+void sendReply(int code, bool success, const String& message) {
+  sendJson(code, String("{\"success\":") + boolStr(success) +
+                 ",\"message\":\"" + jsonEscape(message) + "\"}");
+}
+
+// ============================================================
+//  Wi-Fi logic
+// ============================================================
+bool validateCredentials(const String& ssid, const String& pass, String& error) {
+  if (ssid.length() == 0) {
+    error = "Network name is required.";
+    return false;
+  }
+  if (pass.length() > 0 && pass.length() < cfg::MIN_PASSWORD_LEN) {
+    error = "Password must be at least 8 characters, or empty for an open network.";
+    return false;
+  }
+  return true;
+}
+
+void startConnect(const String& ssid, const String& pass) {
+  Serial.printf("Connecting to: %s\n", ssid.c_str());
+  conn::lastError = "";
+  WiFi.disconnect(false);                  // keep the setup access point running
+  WiFi.begin(ssid.c_str(), pass.c_str());
+  conn::connecting = true;
+  conn::startedAt = millis();
+}
+
+void updateConnection() {
+  if (!conn::connecting) return;
+
+  if (isOnline()) {
+    conn::connecting = false;
+    conn::lastError = "";
+    Serial.print("Connected. Device IP: ");
+    Serial.println(WiFi.localIP());
+  } else if (millis() - conn::startedAt > cfg::CONNECT_TIMEOUT_MS) {
+    conn::connecting = false;
+    conn::lastError = "Could not connect. Check the name and password (2.4 GHz only).";
     WiFi.disconnect(false);
-    WiFi.begin(ssid.c_str(), password.c_str());
-
-    connecting = true;
-    connectionStart = millis();
-
-    server.send(200, "application/json",
-                "{\"success\":true,\"message\":\"Attempting Wi-Fi connection...\"}");
+    Serial.println("Connect timeout");
+  }
 }
 
-// ===================================
-// CONNECTION STATUS API
-// ===================================
+// ============================================================
+//  JSON builders
+// ============================================================
+String buildStatusJson() {
+  const bool online = isOnline();
+
+  String json = "{";
+  json += "\"connected\":";   json += boolStr(online);
+  json += ",\"connecting\":"; json += boolStr(conn::connecting);
+  json += ",\"ssid\":\"";     if (online) json += jsonEscape(WiFi.SSID());
+  json += "\",\"staIP\":\"";  if (online) json += WiFi.localIP().toString();
+  json += "\",\"apIP\":\"";   json += WiFi.softAPIP().toString();
+  json += "\",\"rssi\":";     json += String(online ? WiFi.RSSI() : 0);
+  json += ",\"error\":\"";    json += jsonEscape(conn::lastError);
+  json += "\"}";
+  return json;
+}
+
+String buildScanJson(int count) {
+  String json = "{\"scanning\":false,\"networks\":[";
+  for (int i = 0; i < count; i++) {
+    if (i) json += ",";
+    json += "{\"ssid\":\"";  json += jsonEscape(WiFi.SSID(i));
+    json += "\",\"rssi\":";  json += String(WiFi.RSSI(i));
+    json += ",\"secure\":";  json += boolStr(WiFi.encryptionType(i) != ENC_TYPE_NONE);
+    json += "}";
+  }
+  json += "]}";
+  return json;
+}
+
+// ============================================================
+//  Route handlers
+// ============================================================
+void handleRoot() {
+  server.sendHeader("Cache-Control", "no-store");
+  server.sendHeader("Location", isOnline() ? "/index.html" : "/setup.html");
+  server.send(302, "text/plain", "");
+}
 
 void handleStatus() {
-    bool connected = WiFi.status() == WL_CONNECTED;
-
-    String json = "{";
-    json += "\"connected\":";
-    json += connected ? "true" : "false";
-    json += ",\"ssid\":\"";
-    json += connected ? WiFi.SSID() : "";
-    json += "\",\"staIP\":\"";
-    json += connected ? WiFi.localIP().toString() : "Not assigned";
-    json += "\",\"apIP\":\"";
-    json += WiFi.softAPIP().toString();
-    json += "\"}";
-
-    server.sendHeader("Cache-Control", "no-store");
-    server.send(200, "application/json", json);
+  sendJson(200, buildStatusJson());
 }
 
-// ===================================
-// SETUP
-// ===================================
+void handleScan() {
+  int n = WiFi.scanComplete();
 
+  if (n == WIFI_SCAN_FAILED) {             // no scan yet: start one
+    WiFi.scanNetworks(true);               // async, does not block the server
+    n = WIFI_SCAN_RUNNING;
+  }
+  if (n == WIFI_SCAN_RUNNING) {
+    sendJson(200, "{\"scanning\":true,\"networks\":[]}");
+    return;
+  }
+
+  sendJson(200, buildScanJson(n));
+  WiFi.scanDelete();
+}
+
+void handleConnect() {
+  String ssid = server.arg("ssid");
+  String pass = server.arg("password");
+  ssid.trim();
+
+  String error;
+  if (!validateCredentials(ssid, pass, error)) {
+    sendReply(400, false, error);
+    return;
+  }
+
+  startConnect(ssid, pass);
+  sendReply(200, true, "Connecting to Wi-Fi...");
+}
+
+void handleNotFound() {
+  server.send(404, "text/plain", "404: " + server.uri() + " not found");
+}
+
+// ============================================================
+//  Setup helpers
+// ============================================================
+void mountFilesystem() {
+  if (LittleFS.begin()) {
+    Serial.println("LittleFS OK");
+  } else {
+    Serial.println("LittleFS mount FAILED. Run: Upload Filesystem Image");
+  }
+}
+
+void startWiFi() {
+  WiFi.mode(WIFI_AP_STA);
+  WiFi.softAP(cfg::AP_SSID, cfg::AP_PASS);
+  WiFi.begin();                            // reuse saved credentials, if any
+
+  Serial.print("Setup Wi-Fi: ");
+  Serial.print(cfg::AP_SSID);
+  Serial.print("  http://");
+  Serial.println(WiFi.softAPIP());
+}
+
+void startServer() {
+  server.on("/", HTTP_GET, handleRoot);    // register before serveStatic
+  server.on("/api/status", HTTP_GET, handleStatus);
+  server.on("/api/scan", HTTP_GET, handleScan);
+  server.on("/connect", HTTP_POST, handleConnect);
+  server.serveStatic("/", LittleFS, "/", "no-cache");
+  server.onNotFound(handleNotFound);
+  server.begin();
+  Serial.println("Web server started");
+}
+
+// ============================================================
+//  Arduino entry points
+// ============================================================
 void setup() {
-    Serial.begin(115200);
-    Serial.println();
-    Serial.println("Starting ESP8266...");
+  Serial.begin(115200);
+  delay(500);
+  Serial.println("\nStarting...");
 
-    // Initialize LittleFS
-    if (!LittleFS.begin()) {
-        Serial.println("LittleFS Mount Failed!");
-        return;
-    }
-    Serial.println("LittleFS Mounted Successfully!");
-
-    // Check files are really in flash
-    Serial.println(LittleFS.exists("/setup.html") ? "setup.html OK" : "setup.html MISSING");
-    Serial.println(LittleFS.exists("/index.html") ? "index.html OK" : "index.html MISSING");
-
-    // Enable AP + STA
-    WiFi.mode(WIFI_AP_STA);
-
-    // Create Access Point
-    bool apStarted = WiFi.softAP(apSSID, apPassword);
-    if (apStarted) {
-        Serial.println("Access Point Started!");
-        Serial.print("AP IP: ");
-        Serial.println(WiFi.softAPIP());
-    } else {
-        Serial.println("Access Point Failed!");
-    }
-
-    // ===================================
-    // REGISTER ROUTES
-    // ===================================
-
-    server.on("/", HTTP_GET, handleRoot);
-    server.on("/connect", HTTP_POST, handleConnect);
-    server.on("/api/status", HTTP_GET, handleStatus);
-
-    // Serve HTML, CSS and JavaScript from flash
-    server.serveStatic("/setup.html", LittleFS, "/setup.html");
-    server.serveStatic("/index.html", LittleFS, "/index.html");
-    server.serveStatic("/style.css", LittleFS, "/style.css");
-    server.serveStatic("/script.js", LittleFS, "/script.js");
-
-    // Start server
-    server.begin();
-
-    Serial.println("Web Server Started!");
-    Serial.println("Open http://192.168.4.1");
+  mountFilesystem();
+  startWiFi();
+  startServer();
 }
-
-// ===================================
-// LOOP
-// ===================================
 
 void loop() {
-    server.handleClient();
-
-    if (connecting) {
-        // Successful connection
-        if (WiFi.status() == WL_CONNECTED) {
-            connecting = false;
-
-            Serial.println();
-            Serial.println("WiFi Connected Successfully!");
-            Serial.print("Connected SSID: ");
-            Serial.println(WiFi.SSID());
-            Serial.print("STA IP: ");
-            Serial.println(WiFi.localIP());
-            Serial.print("AP IP: ");
-            Serial.println(WiFi.softAPIP());
-        }
-        // Connection timeout
-        else if (millis() - connectionStart >= connectionTimeout) {
-            connecting = false;
-
-            Serial.println();
-            Serial.println("WiFi Connection Timeout!");
-            Serial.println("Check your SSID and password.");
-        }
-    }
+  server.handleClient();
+  updateConnection();
 }
