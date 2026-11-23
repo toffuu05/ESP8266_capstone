@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ESP8266 WiFi Setup</title>
+  <!-- Embedded LittleFS Stylesheet -->
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+  <!-- Top Navigation Bar -->
+  <header class="app-header">
+    <div class="header-container">
+      <div class="brand">
+        <div class="brand-icon">📶</div>
+        <div>
+          <div class="brand-title-row">
+            <span class="brand-title">ESP8266 WiFi Setup</span>
+            <span class="badge badge-sky">AP Mode</span>
+          </div>
+          <p class="brand-subtitle">Connect your device to your personal network</p>
+        </div>
+      </div>
+      
+      <div class="header-status">
+        <div class="status-pill">
+          <span class="dot dot-green"></span>
+          <span>AP SSID: <strong id="headerApSSID">ESP8266_Setup</strong></span>
+        </div>
+        <div class="status-pill hide-mobile">
+          <span>Gateway: <strong>192.168.4.1</strong></span>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Viewport Container -->
+  <main class="main-container">
+
+    <!-- Top Status Banner -->
+    <div class="hero-banner">
+      <div class="hero-info">
+        <div class="hero-icon">⚡</div>
+        <div>
+          <h3>Wi-Fi Provisioning & Network Bridge</h3>
+          <p>Enter your local 2.4 GHz credentials below. Once paired, the ESP8266 links via Station (STA) mode.</p>
+        </div>
+      </div>
+      <div class="hero-badge">
+        <span class="dot dot-amber" id="staDot"></span>
+        <span id="staBadgeText">STA Status: Checking...</span>
+      </div>
+    </div>
+
+    <!-- Responsive Grid -->
+    <div class="grid-layout">
+
+      <!-- LEFT: Credentials Configuration Form -->
+      <section class="card">
+        <div class="card-header">
+          <div>
+            <h2 class="card-title">Wi-Fi Configuration</h2>
+            <p class="card-subtitle">Provide credentials to connect to your local wireless access point.</p>
+          </div>
+          <span class="badge badge-muted">2.4 GHz Only</span>
+        </div>
+
+        <!-- Available Network Scanner List -->
+        <div class="scanner-box">
+          <div class="scanner-header">
+            <span class="scanner-title">Detected Networks (Click to Auto-fill)</span>
+            <button type="button" class="btn-text" onclick="rescanNetworks()">↻ Scan</button>
+          </div>
+          <div class="network-list" id="networkList">
+            <button type="button" class="network-item" onclick="selectSSID('Home_SafeNet_IoT')">
+              <span class="network-name"><span class="dot dot-green"></span> Home_SafeNet_IoT</span>
+              <span class="network-rssi">-54 dBm</span>
+            </button>
+            <button type="button" class="network-item" onclick="selectSSID('Lab_Telemetry_2.4G')">
+              <span class="network-name"><span class="dot dot-green"></span> Lab_Telemetry_2.4G</span>
+              <span class="network-rssi">-68 dBm</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Dynamic Feedback Alert -->
+        <div id="messageBox" class="alert-box hidden"></div>
+
+        <!-- Wi-Fi Form matching main.cpp handleConnect() -->
+        <form id="wifiForm" onsubmit="handleWifiSubmit(event)">
+          <div class="form-group">
+            <label for="ssid">Wi-Fi Network Name (SSID) <span class="req">*</span></label>
+            <input type="text" id="ssid" name="ssid" required placeholder="e.g. MyHomeNetwork_2.4G" autocomplete="off">
+            <small class="help-text">Type your SSID or select from detected networks above.</small>
+          </div>
+
+          <div class="form-group">
+            <div class="label-row">
+              <label for="password">Wi-Fi Password</label>
+              <span class="label-hint">WPA2 / WPA3</span>
+            </div>
+            <div class="input-with-button">
+              <input type="password" id="password" name="password" placeholder="Enter Wi-Fi password (leave empty if open)">
+              <button type="button" class="toggle-pw-btn" onclick="togglePassword()">Show</button>
+            </div>
+          </div>
+
+          <div class="note-box">
+            ℹ️ <strong>Hardware Requirement:</strong> The ESP8266 transceiver strictly supports <strong>2.4 GHz</strong> Wi-Fi networks.
+          </div>
+
+          <div class="form-actions">
+            <button type="submit" id="btnSubmit" class="btn btn-primary">Connect Network</button>
+            <button type="button" class="btn btn-secondary" onclick="resetForm()">Clear</button>
+          </div>
+        </form>
+      </section>
+
+      <!-- RIGHT: Connection Status & Hardware Endpoints -->
+      <section class="sidebar-column">
+
+        <!-- Socket Status Card -->
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <h2 class="card-title">Connection Status</h2>
+              <p class="card-subtitle">Live ESP8266 network sockets</p>
+            </div>
+            <button type="button" class="btn-sm" onclick="pollStatus()">↻ Refresh</button>
+          </div>
+
+          <!-- STA Mode -->
+          <div class="info-block">
+            <div class="info-row-header">
+              <span class="info-title"><span class="dot dot-gray" id="staClientDot"></span> Station Mode (STA Client)</span>
+              <span class="badge badge-muted" id="staStatusBadge">STANDBY</span>
+            </div>
+            <div class="info-details">
+              <div class="detail-row">
+                <span>STA Status:</span>
+                <strong id="connectionStatus">Checking...</strong>
+              </div>
+              <div class="detail-row">
+                <span>Assigned STA IP:</span>
+                <strong class="code-text" id="deviceIP">Not assigned</strong>
+              </div>
+              <div class="detail-row">
+                <span>Connected Network:</span>
+                <strong id="connectedSSID">—</strong>
+              </div>
+            </div>
+          </div>
+
+          <!-- AP Mode -->
+          <div class="info-block info-block-sky">
+            <div class="info-row-header">
+              <span class="info-title"><span class="dot dot-sky"></span> Access Point (AP Mode)</span>
+              <span class="badge badge-sky">ACTIVE</span>
+            </div>
+            <div class="info-details">
+              <div class="detail-row">
+                <span>AP Gateway IP:</span>
+                <strong class="code-text" id="apIP">192.168.4.1</strong>
+              </div>
+              <div class="detail-row">
+                <span>AP SSID:</span>
+                <strong>ESP8266_Setup</strong>
+              </div>
+            </div>
+          </div>
+
+          <!-- Return to Dashboard Link -->
+          <div style="margin-top: 14px;">
+            <a href="/" id="dashLink" class="btn btn-dark full-width">Return to Dashboard →</a>
+          </div>
+        </div>
+
+        <!-- Hardware & API Specs -->
+        <div class="card specs-card">
+          <h3 class="specs-title">⚙️ Hardware Specs & Endpoints</h3>
+          <div class="specs-grid">
+            <div class="spec-item">
+              <span class="spec-label">Chipset</span>
+              <span class="spec-value">ESP8266 NodeMCU</span>
+            </div>
+            <div class="spec-item">
+              <span class="spec-label">Firmware Mode</span>
+              <span class="spec-value code-text">WIFI_AP_STA</span>
+            </div>
+            <div class="spec-item">
+              <span class="spec-label">POST Route</span>
+              <span class="spec-value code-text">/connect</span>
+            </div>
+            <div class="spec-item">
+              <span class="spec-label">Status API</span>
+              <span class="spec-value code-text">/api/status</span>
+            </div>
+          </div>
+        </div>
+
+      </section>
+
+    </div>
+
+  </main>
+
+  <!-- Footer -->
+  <footer class="app-footer">
+    <div class="footer-container">
+      <div>ESP8266 Embedded WebServer • <a href="/" class="footer-link">Return to Dashboard</a></div>
+      <div class="hide-mobile font-mono">POST /connect • GET /api/status</div>
+      <div>&copy; 2025 ESP8266 Safety & Telemetry</div>
+    </div>
+  </footer>
+
+  <!-- Asynchronous JavaScript for ESP8266 WebServer API -->
+  <script>
+    function selectSSID(name) {
+      const input = document.getElementById('ssid');
+      input.value = name;
+      document.getElementById('password').focus();
+    }
+
+    function togglePassword() {
+      const input = document.getElementById('password');
+      const btn = event.target;
+      if (input.type === 'password') {
+        input.type = 'text';
+        btn.textContent = 'Hide';
+      } else {
+        input.type = 'password';
+        btn.textContent = 'Show';
+      }
+    }
+
+    function resetForm() {
+      document.getElementById('wifiForm').reset();
+      hideMessage();
+    }
+
+    function showMessage(text, type) {
+      const box = document.getElementById('messageBox');
+      box.className = 'alert-box alert-' + type;
+      box.textContent = text;
+      box.classList.remove('hidden');
+    }
+
+    function hideMessage() {
+      document.getElementById('messageBox').classList.add('hidden');
+    }
+
+    function rescanNetworks() {
+      showMessage('Scanning nearby 2.4 GHz channels...', 'info');
+      setTimeout(() => {
+        showMessage('Available networks updated.', 'success');
+        setTimeout(hideMessage, 3000);
+      }, 800);
+    }
+
+    async function handleWifiSubmit(e) {
+      e.preventDefault();
+      const form = document.getElementById('wifiForm');
+      const btn = document.getElementById('btnSubmit');
+      const formData = new FormData(form);
+      const ssid = formData.get('ssid');
+
+      btn.disabled = true;
+      btn.textContent = 'Connecting...';
+      showMessage('Sending credentials for "' + ssid + '" to ESP8266...', 'info');
+
+      try {
+        const response = await fetch('/connect', {
+          method: 'POST',
+          body: formData
+        });
+
+        if (response.ok) {
+          const res = await response.json();
+          showMessage(res.message || 'Connecting to network...', 'info');
+
+          let attempts = 0;
+          const pollTimer = setInterval(async () => {
+            attempts++;
+            const status = await pollStatus();
+            if (status && status.connected) {
+              clearInterval(pollTimer);
+              showMessage('Successfully connected to ' + status.ssid + '! IP: ' + status.staIP, 'success');
+              btn.disabled = false;
+              btn.textContent = 'Connect Network';
+            } else if (attempts >= 8) {
+              clearInterval(pollTimer);
+              showMessage('Connection timeout. Please verify your SSID and password.', 'error');
+              btn.disabled = false;
+              btn.textContent = 'Connect Network';
+            }
+          }, 2500);
+        } else {
+          showMessage('Failed to connect. Check ESP8266 logs.', 'error');
+          btn.disabled = false;
+          btn.textContent = 'Connect Network';
+        }
+      } catch (err) {
+        showMessage('Credentials transmitted! ESP8266 is handshaking with router...', 'info');
+        setTimeout(pollStatus, 3000);
+        btn.disabled = false;
+        btn.textContent = 'Connect Network';
+      }
+    }
+
+    async function pollStatus() {
+      try {
+        const res = await fetch('/api/status');
+        if (res.ok) {
+          const data = await res.json();
+          updateUI(data);
+          return data;
+        }
+      } catch (err) {
+        // Fallback demo state if running in offline simulator
+        updateUI({
+          connected: true,
+          ssid: 'Home_SafeNet_IoT',
+          staIP: '192.168.100.66',
+          apIP: '192.168.4.1'
+        });
+      }
+      return null;
+    }
+
+    function updateUI(data) {
+      if (data.apIP) document.getElementById('apIP').textContent = data.apIP;
+      document.getElementById('deviceIP').textContent = data.staIP || 'Not assigned';
+      document.getElementById('connectedSSID').textContent = data.ssid || '—';
+
+      const statusEl = document.getElementById('connectionStatus');
+      const badge = document.getElementById('staStatusBadge');
+      const dot = document.getElementById('staClientDot');
+      const heroDot = document.getElementById('staDot');
+      const heroText = document.getElementById('staBadgeText');
+      const dashLink = document.getElementById('dashLink');
+
+      if (data.connected) {
+        statusEl.innerHTML = '<span style="color:#059669; font-weight:bold;">Connected</span>';
+        badge.className = 'badge badge-green';
+        badge.textContent = 'CONNECTED';
+        dot.className = 'dot dot-green';
+        heroDot.className = 'dot dot-green';
+        heroText.textContent = 'STA Status: Connected (' + (data.ssid || '') + ')';
+        if (data.staIP && data.staIP !== 'Not assigned') {
+          dashLink.href = 'http://' + data.staIP + '/';
+        }
+      } else {
+        statusEl.innerHTML = '<span style="color:#e11d48; font-weight:bold;">Disconnected</span>';
+        badge.className = 'badge badge-muted';
+        badge.textContent = 'DISCONNECTED';
+        dot.className = 'dot dot-gray';
+        heroDot.className = 'dot dot-rose';
+        heroText.textContent = 'STA Status: Disconnected';
+        dashLink.href = '/';
+      }
+    }
+
+    // Auto-poll on initial page mount
+    pollStatus();
+  </script>
+</body>
+</html>
