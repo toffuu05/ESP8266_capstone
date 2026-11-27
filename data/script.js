@@ -130,6 +130,8 @@
         continue;
       }
       if (d.connected) {
+        $("ssid").value = "";
+        $("password").value = "";
         showMessage("Connected to " + d.ssid + ". Device IP: " + d.staIP, "success");
         return;
       }

@@ -161,24 +161,24 @@ body {
   border-color: #3b4356;
 }
 .btn.primary {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #04101e;
+  background: #38BDF8;
+  border: 1px solid var(--line-strong);
+  color: var(--text-bright);
   font-weight: 700;
   flex: 1;
-  box-shadow: 0 2px 10px rgba(56, 189, 248, 0.25);
 }
 .btn.primary:hover {
-  background: #7dd3fc;
-  border-color: #7dd3fc;
+  background: #232836;
+  border-color: #3b4356;
 }
 .btn.dark {
-  background: #171b26;
-  border-color: var(--line-strong);
+  background: #38BDF8;
+  border: 1px solid var(--line-strong);
   color: var(--text-bright);
 }
 .btn.dark:hover {
   background: #232836;
+  border-color: #3b4356;
 }
 .btn.block {
   display: flex;
